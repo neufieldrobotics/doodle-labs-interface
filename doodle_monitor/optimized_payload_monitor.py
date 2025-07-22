@@ -42,7 +42,6 @@ class EdgePayloadMonitor(Node):
         self.slot_len = self.get_parameter("slot_length").value
         self.guard = self.get_parameter("guard_time").value
         self.iperf_t = self.get_parameter("iperf_time").value
-        self.ping_tmo = self.get_parameter("ping_timeout").value
         self.nodes = sorted(self.get_parameter("node_list").value)
 
         self.reachable: set[str] = set()
@@ -106,7 +105,7 @@ class EdgePayloadMonitor(Node):
         self.reachable = set(ip_peers)
 
     def run_ping(self, ip):
-        cmd = ["ping", "-c", "1", "-W", str(int(self.ping_tmo)), ip]
+        cmd = ["ping", "-c", "1", "-W", "2.0", ip]
         try:
             out = subprocess.check_output(cmd, text=True, stderr=subprocess.STDOUT, timeout=2.5)
             ok  = True

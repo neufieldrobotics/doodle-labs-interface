@@ -38,4 +38,3 @@ optimized_payload_monitor:
     slot_length:       3.5 # Should be gaurd_time + 2 * iperf_time
     guard_time:        0.5
     iperf_time:        3.0
-    ping_timeout:      2.0
