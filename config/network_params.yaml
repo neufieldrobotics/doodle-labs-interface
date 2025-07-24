@@ -1,7 +1,6 @@
 monitor_node:
   ros__parameters:
     # SSH credentials
-    hostname: "10.223.20.201"
     username: "root"
     password: "dsl!auv"
     filepath: "/tmp/linkstate_current.json"

@@ -5,11 +5,25 @@ import os
 import json
 from std_msgs.msg import Float32, Int32, String, Int32MultiArray
 
+
+hostname_to_radio_ip = {
+    'payload0':     "10.223.20.201",
+    'payload1': "10.223.21.49",
+    'nuroampayload02': "10.223.21.45",
+    'neuroam-desktop': "10.223.20.209",
+    'payload4': "10.223.20.173"
+}
+
 class LinkStateScraper(Node):
     def __init__(self):
         super().__init__('monitor_node', automatically_declare_parameters_from_overrides=True)
 
-        self.hostname = self.get_parameter('hostname').value
+        self.hostname = os.uname()[1]
+        try:
+            self.radio_ip = hostname_to_radio_ip[self.hostname]
+        except KeyError:
+            raise RuntimeError(f"Unknown hostname {self.hostname}, do not know radio IP address.")
+
         self.username = self.get_parameter('username').value
         self.password = self.get_parameter('password').value
         self.filepath = self.get_parameter('filepath').value
@@ -23,9 +37,9 @@ class LinkStateScraper(Node):
         self.sys_freemem = self.create_publisher(Int32, 'doodle_monitor/sys/freemem', 10)
         self.sys_localtime = self.create_publisher(Int32, 'doodle_monitor/sys/localtime', 10)
         self.static_info_print = False
-        #self.oper_chan 
-        #self.oper_freq 
-        #self.chan_width 
+        #self.oper_chan
+        #self.oper_freq
+        #self.chan_width
         self.noise = self.create_publisher(Float32, 'doodle_monitor/noise', 10)
         self.activity = self.create_publisher(Int32, 'doodle_monitor/activity', 10)
         self.lna_status = self.create_publisher(Int32, 'doodle_monitor/lna_status', 10)
@@ -36,7 +50,7 @@ class LinkStateScraper(Node):
 
         # uses mesh status and mac_to_IP
         self.get_logger().info(f"MAC->IP map: {self.mac_to_ip_map}")
- 
+
 
 
         self.ssh = paramiko.SSHClient()
@@ -53,7 +67,7 @@ class LinkStateScraper(Node):
         if not self.ssh_connected:
             try:
                 self.ssh.connect(
-                    self.hostname,
+                    self.radio_ip,
                     username=self.username,
                     password=self.password,
                     look_for_keys=False,
@@ -61,11 +75,11 @@ class LinkStateScraper(Node):
                     disabled_algorithms=dict(pubkeys=["rsa-sha2-512", "rsa-sha2-256"])
                 )
                 self.ssh_connected = True
-                self.get_logger().info(f"SSH connection to {self.hostname} established.")
+                self.get_logger().info(f"SSH connection to {self.radio_ip} established.")
             except Exception as e:
                 self.get_logger().error(f"SSH connection failed: {e}. Will retry in {self.passive_timer} seconds.")
-                return 
-            
+                return
+
 
         stdin, stdout, stderr = self.ssh.exec_command(f'cat {self.filepath}')
         output = stdout.read().decode()
@@ -98,7 +112,7 @@ class LinkStateScraper(Node):
             chan_width = data.get('chan_width', 'N/A')
             self.get_logger().info(f"Radio Stats -> Channel: {oper_chan}, Freq: {oper_freq} MHz, Width: {chan_width} MHz")
             self.static_info_print = True
-        
+
         sysinfo = data.get('sysinfo', {})
         cpu_load_list = sysinfo.get("cpu_load", [])
         cpu_msg = Int32MultiArray(data=cpu_load_list)
@@ -112,7 +126,7 @@ class LinkStateScraper(Node):
 
         noise_val = float(data.get("noise", 0.0))
         self.noise.publish(Float32(data=noise_val))
-        
+
         activity_val = int(data.get("activity", 0))
         self.activity.publish(Int32(data=activity_val))
 
