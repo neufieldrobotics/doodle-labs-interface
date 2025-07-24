@@ -113,7 +113,7 @@ class EdgePayloadMonitor(Node):
             out, ok = e.output, False
         self.ping_pub.publish(String(data=json.dumps({"ip": ip, "ok": ok, "raw": out})))
         # DEBUGGING HELPER
-        self.get_logger().info(f"PING {ip}: {'ok' if ok else 'fail'} ")
+        self.get_logger().debug(f"PING {ip}: {'ok' if ok else 'fail'} - {out.strip()}")
 
 
 
@@ -127,6 +127,7 @@ class EdgePayloadMonitor(Node):
             # Use hasattr to safely access e.output
             out = e.output if hasattr(e, 'output') else "Test timed out"
             ok = False
+            self.get_logger().warn(f"IPERF {ip} failed: {e}")
             time.sleep(self.iperf_t)
 
         # check if out is a stringified JSON. If so, let's print the
@@ -140,12 +141,11 @@ class EdgePayloadMonitor(Node):
                 mbps = bits_per_second / 1_000_000
                 self.get_logger().info(f"IPERF {ip}: {mbps:.2f} Mbps")
         except json.JSONDecodeError:
-            self.get_logger().warn(f"iperf output is not valid JSON: {out}")
+            self.get_logger().warn(f"IPERF {ip}: iperf output is not valid JSON: {out}")
             out = json.dumps({"error": "Invalid JSON output from iperf"})
 
         result = {"role": "client", "ip": ip, "ok": ok, "raw": out}
         self.iperf_pub.publish(String(data=json.dumps(result)))
-        self.get_logger().info(f"IPERF {ip}: {'ok' if ok else 'fail'}")
 
 def main(args=None):
     rclpy.init(args=args)
