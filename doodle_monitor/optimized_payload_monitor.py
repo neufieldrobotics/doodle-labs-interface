@@ -129,6 +129,20 @@ class EdgePayloadMonitor(Node):
             ok = False
             time.sleep(self.iperf_t)
 
+        # check if out is a stringified JSON. If so, let's print the
+        # info under "end -> sum_received -> bits_per_second"
+        # and print out the Mbps value.
+        try:
+            json.loads(out)
+            parsed_out = json.loads(out)
+            if "end" in parsed_out and "sum_received" in parsed_out["end"]:
+                bits_per_second = parsed_out["end"]["sum_received"]["bits_per_second"]
+                mbps = bits_per_second / 1_000_000
+                self.get_logger().info(f"IPERF {ip}: {mbps:.2f} Mbps")
+        except json.JSONDecodeError:
+            self.get_logger().warn(f"iperf output is not valid JSON: {out}")
+            out = json.dumps({"error": "Invalid JSON output from iperf"})
+
         result = {"role": "client", "ip": ip, "ok": ok, "raw": out}
         self.iperf_pub.publish(String(data=json.dumps(result)))
         self.get_logger().info(f"IPERF {ip}: {'ok' if ok else 'fail'}")
