@@ -1,7 +1,7 @@
 monitor_node:
   ros__parameters:
     # SSH credentials
-    hostname: "10.223.20.173"
+    hostname: "10.223.20.201"
     username: "root"
     password: "dsl!auv"
     filepath: "/tmp/linkstate_current.json"
@@ -17,7 +17,7 @@ monitor_node:
         "00:30:1a:3b:14:c9": "10.19.30.100",
         "00:30:1a:3b:15:31": "10.19.30.101",
         "00:30:1a:3b:15:2d": "10.19.30.102",
-        "00:30:1a:3b:14:1d": "10.19.30.103",
+        "00:30:1a:3b:14:d1": "10.19.30.103",
         "00:30:1a:3b:14:ad": "10.19.30.104",
         "00:30:1a:3b:14:9d": "10.19.30.2",
         "00:30:1a:3b:14:cd": "10.19.30.3"
@@ -27,7 +27,7 @@ monitor_node:
 
 optimized_payload_monitor:
   ros__parameters:
-    my_name: "10.19.30.104"
+    my_name: "10.19.30.100"
     node_list:    ["10.19.30.100",  # Used for generating list
                     "10.19.30.101",
                     "10.19.30.102",
