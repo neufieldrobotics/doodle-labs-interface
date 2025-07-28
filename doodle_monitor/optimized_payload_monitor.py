@@ -18,22 +18,6 @@ import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String
 
-def edge_coloring_schedule(nodes):
-    """Return list[ list[(a,b)] ]: perfect matchings of K_n."""
-    edges, schedule, used = list(permutations(nodes, 2)), [], set()
-    while len(used) < len(edges):
-        slot, seen = [], set()
-        for a, b in edges:
-            if (a, b) in used:
-                continue
-            if a not in seen and b not in seen:
-                slot.append((a, b))
-                seen.update({a, b})
-                used.add((a, b))
-        schedule.append(slot)
-    return schedule
-
-
 ### INFO TO DEFINE NETWORK AND SCHEDULE
 HOSTNAME_TO_IP_MAPPING = {
     "payload0": "10.19.30.100",
@@ -44,6 +28,35 @@ HOSTNAME_TO_IP_MAPPING = {
 }
 ORANGE_BOX_IPS = ["10.19.30.2", "10.19.30.3"]
 NODE_LIST = sorted(list(HOSTNAME_TO_IP_MAPPING.values()) + ORANGE_BOX_IPS)
+
+def edge_coloring_schedule(nodes):
+    """Return list[ list[(a,b)] ]: perfect matchings of K_n."""
+    edges, schedule, used = list(permutations(nodes, 2)), [], set()
+
+    # remove edges coming from the orange boxes
+    edges = [edge for edge in edges if edge[0] not in ORANGE_BOX_IPS]
+
+    while len(used) < len(edges):
+        slot, seen = [], set()
+        for a, b in edges:
+            if (a, b) in used:
+                continue
+            if a not in seen and b not in seen:
+                slot.append((a, b))
+                seen.update({a, b})
+                used.add((a, b))
+        schedule.append(slot)
+
+    # check that, for each slot, no node is used more than once
+    for slot in schedule:
+        seen = set()
+        for a, b in slot:
+            if a in seen or b in seen:
+                raise ValueError(f"Node {a} or {b} used more than once in slot {slot}")
+            seen.update({a, b})
+
+    return schedule
+
 SCHEDULE = edge_coloring_schedule(NODE_LIST)
 NUM_SLOTS = len(SCHEDULE)
 
@@ -117,12 +130,13 @@ class EdgePayloadMonitor(Node):
 
         # find if the current device is slotted to run a test
         my_test_partner = None
-        for client, server in slot:
+        for client, server in slotted_comms:
             if client == self.my_ip:
                 my_test_partner = server
                 break
 
         if not my_test_partner:
+            self.get_logger().info(f"[SLEEP] {self.my_ip} not active in slot {slot_idx}")
             return
 
         # check if the partner is reachable
@@ -131,6 +145,7 @@ class EdgePayloadMonitor(Node):
             return
 
         # run the ping and iperf tests
+        self.get_logger().info(f"[TRYING] {self.my_ip} contacting {my_test_partner}")
         self.run_ping(my_test_partner)
         self.run_iperf(my_test_partner)
 
