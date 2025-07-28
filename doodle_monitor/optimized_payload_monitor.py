@@ -183,6 +183,8 @@ class EdgePayloadMonitor(Node):
             ok = True
         except subprocess.CalledProcessError as e:
             out, ok = e.output, False
+        except subprocess.TimeoutExpired as e:
+            out, ok = "Ping timed out", False
         self.ping_pub.publish(String(data=json.dumps({"ip": ip, "ok": ok, "raw": out})))
         self.get_logger().debug(f"PING {ip}: {'ok' if ok else 'fail'} - {out.strip()}")
         return ok
