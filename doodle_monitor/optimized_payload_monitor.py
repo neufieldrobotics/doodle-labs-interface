@@ -186,6 +186,9 @@ class EdgePayloadMonitor(Node):
             self.get_logger().warn(f"IPERF {ip} failed: {e}")
             time.sleep(IPERF_TIME)
 
+        if out is None:
+            out = "No output from iperf"
+
         # check if out is a stringified JSON. If so, let's print the
         # info under "end -> sum_received -> bits_per_second"
         # and print out the Mbps value.
