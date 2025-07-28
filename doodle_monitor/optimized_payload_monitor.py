@@ -62,7 +62,7 @@ NUM_SLOTS = len(SCHEDULE)
 
 
 ### TIMING INFO
-GUARD_TIME = 0.5  # seconds
+GUARD_TIME = 0.6  # seconds
 IPERF_TIME = 1.0  # seconds
 SLOT_LENGTH = GUARD_TIME + IPERF_TIME  # total time for one slot
 
@@ -136,7 +136,7 @@ class EdgePayloadMonitor(Node):
                 break
 
         if not my_test_partner:
-            self.get_logger().debug(f"[SLEEP] {self.my_ip} not active in slot {slot_idx}")
+            self.get_logger().info(f"[SLEEP] {self.my_ip} not active in slot {slot_idx}")
             return
 
         # check if the partner is reachable
@@ -167,7 +167,7 @@ class EdgePayloadMonitor(Node):
         cmd = ["ping", "-c", "1", "-W", "2.0", ip]
         try:
             out = subprocess.check_output(
-                cmd, text=True, stderr=subprocess.STDOUT, timeout=GUARD_TIME / 2.0
+                cmd, text=True, stderr=subprocess.STDOUT, timeout=100e-3
             )
             ok = True
         except subprocess.CalledProcessError as e:
@@ -177,7 +177,7 @@ class EdgePayloadMonitor(Node):
         return ok
 
     def run_iperf(self, ip):
-        timeout = IPERF_TIME + (GUARD_TIME / 2.0)
+        timeout = IPERF_TIME + (GUARD_TIME)
         cmd = ["iperf3", "-c", ip, "-t", str(IPERF_TIME), "-b", "0", "--json"]
         try:
             out = subprocess.check_output(
@@ -186,7 +186,7 @@ class EdgePayloadMonitor(Node):
             ok = True
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
             # Use hasattr to safely access e.output
-            out = e.output if hasattr(e, "output") else "Test timed out"
+            out = e.output if hasattr(e, "output") and e.output is not None else "Test timed out"
             ok = False
             self.get_logger().warn(f"IPERF {ip} failed: {e}")
 
