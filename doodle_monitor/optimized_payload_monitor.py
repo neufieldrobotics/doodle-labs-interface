@@ -146,8 +146,12 @@ class EdgePayloadMonitor(Node):
 
         # run the ping and iperf tests
         self.get_logger().debug(f"[TRYING] {self.my_ip} contacting {my_test_partner}")
-        self.run_ping(my_test_partner)
-        self.run_iperf(my_test_partner)
+        ping_worked = self.run_ping(my_test_partner)
+        if ping_worked:
+            self.run_iperf(my_test_partner)
+        else:
+            self.get_logger().info(f"[PING FAIL] Current IP {self.my_ip} failed to ping {my_test_partner}, skipping.")
+
 
     def peer_list_cb(self, msg: String):
         try:
@@ -170,6 +174,7 @@ class EdgePayloadMonitor(Node):
             out, ok = e.output, False
         self.ping_pub.publish(String(data=json.dumps({"ip": ip, "ok": ok, "raw": out})))
         self.get_logger().debug(f"PING {ip}: {'ok' if ok else 'fail'} - {out.strip()}")
+        return ok
 
     def run_iperf(self, ip):
         timeout = IPERF_TIME + (GUARD_TIME / 2.0)
@@ -184,7 +189,6 @@ class EdgePayloadMonitor(Node):
             out = e.output if hasattr(e, "output") else "Test timed out"
             ok = False
             self.get_logger().warn(f"IPERF {ip} failed: {e}")
-            time.sleep(IPERF_TIME)
 
         if out is None:
             out = "No output from iperf"
