@@ -109,7 +109,7 @@ class EdgePayloadMonitor(Node):
         # if outside of the window given to start the test, skip
         now_is_in_start_window = slot_start <= now < end_start_window
         if not now_is_in_start_window:
-            self.ros_logger().debug(
+            self.get_logger().debug(
                 f"Not in start window ({slot_start:.1f} to {end_start_window:.1f}) - "
                 f"waiting until {slot_end:.1f}s"
             )
