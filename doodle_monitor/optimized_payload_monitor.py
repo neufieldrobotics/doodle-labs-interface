@@ -5,7 +5,7 @@ Run one ping + short UDP-iperf burst to a single partner per time-slot,
 using a deterministic edge-coloured schedule so that all payloads stay
 in lock-step without exchanging control messages.
 
-* slot_length      = guard_time + iperf_time   (e.g. 1.3 s)
+* slot_length      = buffer_time + iperf_time   (e.g. 1.3 s)
 * num_slots        = len(schedule)  ==  (#nodes-even) ? n-1 : n
 * full cycle       = slot_length x num_slots
 """
@@ -62,9 +62,10 @@ NUM_SLOTS = len(SCHEDULE)
 
 
 ### TIMING INFO
-GUARD_TIME = 0.6  # seconds
+IPERF_TIMEOUT_BUFFER = 0.4
+TIMING_BUFFER = 0.1
 IPERF_TIME = 1.0  # seconds
-SLOT_LENGTH = GUARD_TIME + IPERF_TIME  # total time for one slot
+SLOT_LENGTH = IPERF_TIME + IPERF_TIMEOUT_BUFFER + TIMING_BUFFER  # total time for one slot
 
 
 class EdgePayloadMonitor(Node):
@@ -115,17 +116,24 @@ class EdgePayloadMonitor(Node):
         slot_idx = int(now // SLOT_LENGTH) % self.num_slots
         slotted_comms = SCHEDULE[slot_idx]
 
+        print("\n\n")
+        self.get_logger().info(f"[SLOT {slot_idx}]")
+
         slot_start = math.floor(now / SLOT_LENGTH) * SLOT_LENGTH
-        end_start_window = slot_start + (GUARD_TIME / 2.0)
+        end_start_window = slot_start + TIMING_BUFFER
         slot_end = slot_start + SLOT_LENGTH
+        
+        def _wait_for_next_slot():
+            time.sleep(max(0, slot_end - time.time()))
 
         # if outside of the window given to start the test, skip
-        now_is_in_start_window = slot_start + (GUARD_TIME / 4.0) <= now < end_start_window
+        now_is_in_start_window = slot_start <= now < end_start_window
         if not now_is_in_start_window:
             self.get_logger().info(
-                f"Not in start window ({slot_start:.1f} to {end_start_window:.1f}) - "
+                f"Now: {now} Not in start window ({slot_start:.1f} to {end_start_window:.1f}) - "
                 f"waiting until {slot_end:.1f}s"
             )
+            _wait_for_next_slot()
             return
 
         # find if the current device is slotted to run a test
@@ -137,11 +145,13 @@ class EdgePayloadMonitor(Node):
 
         if not my_test_partner:
             self.get_logger().info(f"[SLEEP] {self.my_ip} not active in slot {slot_idx}")
+            _wait_for_next_slot()
             return
 
         # check if the partner is reachable
         if my_test_partner not in self.reachable:
             self.get_logger().info(f"[NO REACH] Current IP {self.my_ip} cannot reach partner {my_test_partner}, skipping.")
+            _wait_for_next_slot()
             return
 
         # run the ping and iperf tests
@@ -151,7 +161,7 @@ class EdgePayloadMonitor(Node):
             self.run_iperf(my_test_partner)
         else:
             self.get_logger().info(f"[PING FAIL] Current IP {self.my_ip} failed to ping {my_test_partner}, skipping.")
-
+        _wait_for_next_slot()
 
     def peer_list_cb(self, msg: String):
         try:
@@ -167,7 +177,7 @@ class EdgePayloadMonitor(Node):
         cmd = ["ping", "-c", "1", "-W", "2.0", ip]
         try:
             out = subprocess.check_output(
-                cmd, text=True, stderr=subprocess.STDOUT, timeout=100e-3
+                cmd, text=True, stderr=subprocess.STDOUT, timeout=0.1
             )
             ok = True
         except subprocess.CalledProcessError as e:
@@ -177,11 +187,10 @@ class EdgePayloadMonitor(Node):
         return ok
 
     def run_iperf(self, ip):
-        timeout = IPERF_TIME + (GUARD_TIME / 2.0)
         cmd = ["iperf3", "-c", ip, "-t", str(IPERF_TIME), "-b", "0", "--json"]
         try:
             out = subprocess.check_output(
-                cmd, text=True, stderr=subprocess.STDOUT, timeout=timeout
+                cmd, text=True, stderr=subprocess.STDOUT, timeout=IPERF_TIME + IPERF_TIMEOUT_BUFFER
             )
             ok = True
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
