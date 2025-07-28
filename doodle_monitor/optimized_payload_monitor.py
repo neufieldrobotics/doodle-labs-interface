@@ -136,7 +136,7 @@ class EdgePayloadMonitor(Node):
                 break
 
         if not my_test_partner:
-            self.get_logger().info(f"[SLEEP] {self.my_ip} not active in slot {slot_idx}")
+            self.get_logger().debug(f"[SLEEP] {self.my_ip} not active in slot {slot_idx}")
             return
 
         # check if the partner is reachable
@@ -145,7 +145,7 @@ class EdgePayloadMonitor(Node):
             return
 
         # run the ping and iperf tests
-        self.get_logger().info(f"[TRYING] {self.my_ip} contacting {my_test_partner}")
+        self.get_logger().debug(f"[TRYING] {self.my_ip} contacting {my_test_partner}")
         self.run_ping(my_test_partner)
         self.run_iperf(my_test_partner)
 
