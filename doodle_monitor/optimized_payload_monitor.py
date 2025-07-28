@@ -63,9 +63,10 @@ NUM_SLOTS = len(SCHEDULE)
 
 ### TIMING INFO
 IPERF_TIMEOUT_BUFFER = 0.4
-TIMING_BUFFER = 0.1
+PING_TIMEOUT_BUFFER = 0.15
+GENERAL_TIMING_BUFFER = 0.1
 IPERF_TIME = 1.0  # seconds
-SLOT_LENGTH = IPERF_TIME + IPERF_TIMEOUT_BUFFER + TIMING_BUFFER  # total time for one slot
+SLOT_LENGTH = IPERF_TIME + IPERF_TIMEOUT_BUFFER + PING_TIMEOUT_BUFFER + GENERAL_TIMING_BUFFER # total time for one slot
 
 
 class EdgePayloadMonitor(Node):
@@ -120,7 +121,7 @@ class EdgePayloadMonitor(Node):
         self.get_logger().info(f"[SLOT {slot_idx}]")
 
         slot_start = math.floor(now / SLOT_LENGTH) * SLOT_LENGTH
-        end_start_window = slot_start + TIMING_BUFFER
+        end_start_window = slot_start + GENERAL_TIMING_BUFFER
         slot_end = slot_start + SLOT_LENGTH
         
         def _wait_for_next_slot():
@@ -177,7 +178,7 @@ class EdgePayloadMonitor(Node):
         cmd = ["ping", "-c", "1", "-W", "2.0", ip]
         try:
             out = subprocess.check_output(
-                cmd, text=True, stderr=subprocess.STDOUT, timeout=0.1
+                cmd, text=True, stderr=subprocess.STDOUT, timeout=PING_TIMEOUT_BUFFER
             )
             ok = True
         except subprocess.CalledProcessError as e:
