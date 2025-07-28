@@ -63,7 +63,7 @@ NUM_SLOTS = len(SCHEDULE)
 
 ### TIMING INFO
 GUARD_TIME = 0.5  # seconds
-IPERF_TIME = 3.0  # seconds
+IPERF_TIME = 1.0  # seconds
 SLOT_LENGTH = GUARD_TIME + IPERF_TIME  # total time for one slot
 
 
@@ -120,7 +120,7 @@ class EdgePayloadMonitor(Node):
         slot_end = slot_start + SLOT_LENGTH
 
         # if outside of the window given to start the test, skip
-        now_is_in_start_window = slot_start <= now < end_start_window
+        now_is_in_start_window = slot_start + (GUARD_TIME / 4.0) <= now < end_start_window
         if not now_is_in_start_window:
             self.get_logger().debug(
                 f"Not in start window ({slot_start:.1f} to {end_start_window:.1f}) - "
