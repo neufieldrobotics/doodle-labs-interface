@@ -34,65 +34,105 @@ def edge_coloring_schedule(nodes):
     return schedule
 
 
+### INFO TO DEFINE NETWORK AND SCHEDULE
+HOSTNAME_TO_IP_MAPPING = {
+    "payload0": "10.19.30.100",
+    "payload1": "10.19.30.101",
+    "nuroampayload02": "10.19.30.102",
+    "neuroam-desktop": "10.19.30.103",
+    "payload4": "10.19.30.104",
+}
+ORANGE_BOX_IPS = ["10.19.30.2", "10.19.30.3"]
+NODE_LIST = sorted(list(HOSTNAME_TO_IP_MAPPING.values()) + ORANGE_BOX_IPS)
+SCHEDULE = edge_coloring_schedule(NODE_LIST)
+NUM_SLOTS = len(SCHEDULE)
+
+
+### TIMING INFO
+GUARD_TIME = 0.5  # seconds
+IPERF_TIME = 3.0  # seconds
+SLOT_LENGTH = GUARD_TIME + IPERF_TIME  # total time for one slot
+
+
 class EdgePayloadMonitor(Node):
     def __init__(self):
-        super().__init__("edge_payload_monitor", automatically_declare_parameters_from_overrides=True)
+        super().__init__(
+            "edge_payload_monitor", automatically_declare_parameters_from_overrides=True
+        )
 
-        self.my_name = self.get_parameter("my_name").value
-        self.slot_len = self.get_parameter("slot_length").value
-        self.guard = self.get_parameter("guard_time").value
-        self.iperf_t = self.get_parameter("iperf_time").value
-        self.nodes = sorted(self.get_parameter("node_list").value)
+        import os
+        self.hostname = os.uname()[1]
+        self.my_ip = HOSTNAME_TO_IP_MAPPING.get(self.hostname, None)
+        if self.my_ip is None:
+            raise RuntimeError(
+                f"Unknown hostname {self.hostname} for user {self.get_namespace()}, "
+                "do not know IP address."
+            )
 
         self.reachable: set[str] = set()
-        self.schedule  = edge_coloring_schedule(self.nodes)
-        self.num_slots = len(self.schedule)
+        self.num_slots = len(SCHEDULE)
 
-        self.create_subscription(String, "doodle_monitor/peer_list", self.peer_list_cb, 10)
-        self.ping_pub  = self.create_publisher(String, "doodle_monitor/ping_result", 10)
-        self.iperf_pub = self.create_publisher(String, "doodle_monitor/iperf_result", 10)
+        self.create_subscription(
+            String, "doodle_monitor/peer_list", self.peer_list_cb, 10
+        )
+        self.ping_pub = self.create_publisher(String, "doodle_monitor/ping_result", 10)
+        self.iperf_pub = self.create_publisher(
+            String, "doodle_monitor/iperf_result", 10
+        )
 
         self.create_timer(0.25, self.edge_slot_runner)
 
         self.get_logger().info(
-            f"edge‑schedule ready: slot_len={self.slot_len}s  "
-            f"slots={self.num_slots}  my_name={self.my_name}")
-        
+            f"edge-schedule ready: slot_len={SLOT_LENGTH}s  "
+            f"slots={self.num_slots}  my_ip={self.my_ip}"
+        )
+
         # DEBUGGING HELPER
-        sched_str = json.dumps(self.schedule, sort_keys=True)
+        sched_str = json.dumps(SCHEDULE, sort_keys=True)
         fingerprint = hashlib.md5(sched_str.encode()).hexdigest()[:8]
-        self.get_logger().info(f"schedule MD5={fingerprint}  slots={len(self.schedule)} -> {self.schedule}")
+        self.get_logger().info(
+            f"schedule MD5={fingerprint}  slots={len(SCHEDULE)} -> {SCHEDULE}"
+        )
 
     def edge_slot_runner(self):
-        if not self.schedule:
+        if not SCHEDULE:
             return
 
         now = time.time()
-        slot_idx = int(now // self.slot_len) % self.num_slots
-        slot = self.schedule[slot_idx]
+        slot_idx = int(now // SLOT_LENGTH) % self.num_slots
+        slotted_comms = SCHEDULE[slot_idx]
 
+        slot_start = math.floor(now / SLOT_LENGTH) * SLOT_LENGTH
+        end_start_window = slot_start + (GUARD_TIME / 2.0)
+        slot_end = slot_start + SLOT_LENGTH
+
+        # if outside of the window given to start the test, skip
+        now_is_in_start_window = slot_start <= now < end_start_window
+        if not now_is_in_start_window:
+            self.ros_logger().debug(
+                f"Not in start window ({slot_start:.1f} to {end_start_window:.1f}) - "
+                f"waiting until {slot_end:.1f}s"
+            )
+            return
+
+        # find if the current device is slotted to run a test
         my_test_partner = None
         for client, server in slot:
-            if client == self.my_name:
+            if client == self.my_ip:
                 my_test_partner = server
-                break 
+                break
 
         if not my_test_partner:
             return
 
-        # Check if the target is online
+        # check if the partner is reachable
         if my_test_partner not in self.reachable:
-            self.get_logger().debug(f"partner {my_test_partner} offline - skip")
+            self.get_logger().info(f"[NO REACH] Current IP {self.my_ip} cannot reach partner {my_test_partner}, skipping.")
             return
 
-        # Define the single window for our forward-only test
-        slot_start = math.floor(now / self.slot_len) * self.slot_len
-        launch_at  = slot_start + self.guard
-        if launch_at <= now < launch_at + self.iperf_t:
-            self.get_logger().info(f"Running FORWARD test to {my_test_partner}")
-            self.run_ping(my_test_partner)
-            self.run_iperf(my_test_partner) # Only runs the forward tests
-
+        # run the ping and iperf tests
+        self.run_ping(my_test_partner)
+        self.run_iperf(my_test_partner)
 
     def peer_list_cb(self, msg: String):
         try:
@@ -107,28 +147,29 @@ class EdgePayloadMonitor(Node):
     def run_ping(self, ip):
         cmd = ["ping", "-c", "1", "-W", "2.0", ip]
         try:
-            out = subprocess.check_output(cmd, text=True, stderr=subprocess.STDOUT, timeout=2.5)
-            ok  = True
+            out = subprocess.check_output(
+                cmd, text=True, stderr=subprocess.STDOUT, timeout=GUARD_TIME / 2.0
+            )
+            ok = True
         except subprocess.CalledProcessError as e:
             out, ok = e.output, False
         self.ping_pub.publish(String(data=json.dumps({"ip": ip, "ok": ok, "raw": out})))
-        # DEBUGGING HELPER
         self.get_logger().debug(f"PING {ip}: {'ok' if ok else 'fail'} - {out.strip()}")
 
-
-
     def run_iperf(self, ip):
-        timeout = self.iperf_t + 0.5
-        cmd = ["iperf3", "-c", ip, "-t", str(self.iperf_t), "-b", "0", "--json"]
+        timeout = IPERF_TIME + (GUARD_TIME / 2.0)
+        cmd = ["iperf3", "-c", ip, "-t", str(IPERF_TIME), "-b", "0", "--json"]
         try:
-            out = subprocess.check_output(cmd, text=True, stderr=subprocess.STDOUT, timeout=timeout)
-            ok  = True
+            out = subprocess.check_output(
+                cmd, text=True, stderr=subprocess.STDOUT, timeout=timeout
+            )
+            ok = True
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
             # Use hasattr to safely access e.output
-            out = e.output if hasattr(e, 'output') else "Test timed out"
+            out = e.output if hasattr(e, "output") else "Test timed out"
             ok = False
             self.get_logger().warn(f"IPERF {ip} failed: {e}")
-            time.sleep(self.iperf_t)
+            time.sleep(IPERF_TIME)
 
         # check if out is a stringified JSON. If so, let's print the
         # info under "end -> sum_received -> bits_per_second"
@@ -139,13 +180,14 @@ class EdgePayloadMonitor(Node):
             if "end" in parsed_out and "sum_received" in parsed_out["end"]:
                 bits_per_second = parsed_out["end"]["sum_received"]["bits_per_second"]
                 mbps = bits_per_second / 1_000_000
-                self.get_logger().info(f"IPERF {ip}: {mbps:.2f} Mbps")
+                self.get_logger().info(f"[BANDWIDTH] IPERF {ip}: {mbps:.1f} Mbps")
         except json.JSONDecodeError:
             self.get_logger().warn(f"IPERF {ip}: iperf output is not valid JSON: {out}")
             out = json.dumps({"error": "Invalid JSON output from iperf"})
 
         result = {"role": "client", "ip": ip, "ok": ok, "raw": out}
         self.iperf_pub.publish(String(data=json.dumps(result)))
+
 
 def main(args=None):
     rclpy.init(args=args)

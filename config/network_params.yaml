@@ -21,20 +21,3 @@ monitor_node:
         "00:30:1a:3b:14:9d": "10.19.30.2",
         "00:30:1a:3b:14:cd": "10.19.30.3"
       }
-
-
-
-optimized_payload_monitor:
-  ros__parameters:
-    my_name: "10.19.30.100"
-    node_list:    ["10.19.30.100",  # Used for generating list
-                    # "10.19.30.101",
-                    "10.19.30.102",
-                    "10.19.30.103",
-                    "10.19.30.104",
-                    "10.19.30.2",
-                    # "10.19.30.3"
-                    ]
-    slot_length:       3.5 # Should be gaurd_time + 2 * iperf_time
-    guard_time:        0.5
-    iperf_time:        3.0
