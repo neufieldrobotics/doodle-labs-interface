@@ -122,7 +122,7 @@ class EdgePayloadMonitor(Node):
         # if outside of the window given to start the test, skip
         now_is_in_start_window = slot_start + (GUARD_TIME / 4.0) <= now < end_start_window
         if not now_is_in_start_window:
-            self.get_logger().debug(
+            self.get_logger().info(
                 f"Not in start window ({slot_start:.1f} to {end_start_window:.1f}) - "
                 f"waiting until {slot_end:.1f}s"
             )
@@ -177,7 +177,7 @@ class EdgePayloadMonitor(Node):
         return ok
 
     def run_iperf(self, ip):
-        timeout = IPERF_TIME + (GUARD_TIME)
+        timeout = IPERF_TIME + (GUARD_TIME / 2.0)
         cmd = ["iperf3", "-c", ip, "-t", str(IPERF_TIME), "-b", "0", "--json"]
         try:
             out = subprocess.check_output(
