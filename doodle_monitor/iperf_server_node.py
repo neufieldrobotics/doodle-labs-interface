@@ -3,24 +3,24 @@
 -can instead create a dameon to run iperf -s:
 
 
-sudo nano /etc/systemd/system/iperf3.service 
+sudo nano /etc/systemd/system/iperf3.service
 
-Paste: 
-[Unit] 
-Description=iperf3 bandwidth‑test server 
-After=network.target 
+Paste:
+[Unit]
+Description=iperf3 bandwidth‑test server
+After=network.target
 
-[Service] 
-ExecStart=/usr/bin/iperf3 -s  
-Restart=on-failure 
-  
-[Install] 
-WantedBy=multi-user.target 
+[Service]
+ExecStart=/usr/bin/iperf3 -s
+Restart=on-failure
 
-Restart and check status: 
-sudo systemctl daemon-reload 
-sudo systemctl enable --now iperf3 
-sudo systemctl status iperf3 
+[Install]
+WantedBy=multi-user.target
+
+Restart and check status:
+sudo systemctl daemon-reload
+sudo systemctl enable --now iperf3
+sudo systemctl status iperf3
 
 """
 
@@ -56,11 +56,11 @@ class IperfServer(Node):
 
             if not output:
                 self.get_logger().warn("iperf3 server exited with no output.")
-                continue 
+                continue
 
             try:
                 data = json.loads(output)
-                
+
                 peer_ip = data.get("start", {}).get("connected", [{}])[0].get("remote_host")
                 if not peer_ip:
                     self.get_logger().warn("Could not find remote_host in iperf3 JSON.")
