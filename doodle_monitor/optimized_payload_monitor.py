@@ -97,7 +97,7 @@ class EdgePayloadMonitor(Node):
 
         self.create_timer(0.25, self.edge_slot_runner)
 
-        self.get_logger().info(
+        self.get_logger().debug(
             f"edge-schedule ready: slot_len={SLOT_LENGTH}s  "
             f"slots={self.num_slots}  my_ip={self.my_ip}"
         )
@@ -105,7 +105,7 @@ class EdgePayloadMonitor(Node):
         # DEBUGGING HELPER
         sched_str = json.dumps(SCHEDULE, sort_keys=True)
         fingerprint = hashlib.md5(sched_str.encode()).hexdigest()[:8]
-        self.get_logger().info(
+        self.get_logger().debug(
             f"schedule MD5={fingerprint}  slots={len(SCHEDULE)} -> {SCHEDULE}"
         )
 
@@ -118,7 +118,7 @@ class EdgePayloadMonitor(Node):
         slotted_comms = SCHEDULE[slot_idx]
 
         print("\n\n")
-        self.get_logger().info(f"[SLOT {slot_idx}]")
+        self.get_logger().debug(f"[SLOT {slot_idx}]")
 
         slot_start = math.floor(now / SLOT_LENGTH) * SLOT_LENGTH
         end_start_window = slot_start + GENERAL_TIMING_BUFFER
@@ -130,7 +130,7 @@ class EdgePayloadMonitor(Node):
         # if outside of the window given to start the test, skip
         now_is_in_start_window = slot_start <= now < end_start_window
         if not now_is_in_start_window:
-            self.get_logger().info(
+            self.get_logger().debug(
                 f"Now: {now} Not in start window ({slot_start:.1f} to {end_start_window:.1f}) - "
                 f"waiting until {slot_end:.1f}s"
             )
@@ -145,13 +145,13 @@ class EdgePayloadMonitor(Node):
                 break
 
         if not my_test_partner:
-            self.get_logger().info(f"[SLEEP] {self.my_ip} not active in slot {slot_idx}")
+            self.get_logger().debug(f"[SLEEP] {self.my_ip} not active in slot {slot_idx}")
             _wait_for_next_slot()
             return
 
         # check if the partner is reachable
         if my_test_partner not in self.reachable:
-            self.get_logger().info(f"[NO REACH] Current IP {self.my_ip} cannot reach partner {my_test_partner}, skipping.")
+            self.get_logger().debug(f"[NO REACH] Current IP {self.my_ip} cannot reach partner {my_test_partner}, skipping.")
             _wait_for_next_slot()
             return
 
@@ -161,7 +161,7 @@ class EdgePayloadMonitor(Node):
         if ping_worked:
             self.run_iperf(my_test_partner)
         else:
-            self.get_logger().info(f"[PING FAIL] Current IP {self.my_ip} failed to ping {my_test_partner}, skipping.")
+            self.get_logger().debug(f"[PING FAIL] Current IP {self.my_ip} failed to ping {my_test_partner}, skipping.")
         _wait_for_next_slot()
 
     def peer_list_cb(self, msg: String):
