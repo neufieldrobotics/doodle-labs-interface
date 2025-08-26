@@ -9,8 +9,8 @@ from std_msgs.msg import Float32, Int32, String, Int32MultiArray
 hostname_to_radio_ip = {
     'payload0':     "10.223.20.201",
     'payload1': "10.223.21.49",
-    'nuroampayload02': "10.223.21.45",
-    'neuroam-desktop': "10.223.20.209",
+    'payload2': "10.223.21.45",
+    'payload3': "10.223.20.209",
     'payload4': "10.223.20.173"
 }
 

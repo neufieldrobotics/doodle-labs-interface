@@ -22,8 +22,8 @@ from std_msgs.msg import String
 HOSTNAME_TO_IP_MAPPING = {
     "payload0": "10.19.30.100",
     "payload1": "10.19.30.101",
-    "nuroampayload02": "10.19.30.102",
-    "neuroam-desktop": "10.19.30.103",
+    "payload2": "10.19.30.102",
+    "payload3": "10.19.30.103",
     "payload4": "10.19.30.104",
 }
 ORANGE_BOX_IPS = ["10.19.30.2", "10.19.30.3"]
