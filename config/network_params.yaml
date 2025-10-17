@@ -6,13 +6,14 @@ monitor_node:
     filepath: "/tmp/linkstate_current.json"
     passive_timer: 5.0
 
-    hostname_to_radio_ip:
-      payload0: "10.223.20.201"
-      payload1: "10.223.21.49"
-      payload2: "10.223.21.45"
-      payload3: "10.223.20.209"
-      payload4: "10.223.20.173"
-
+    hostname_to_radio_ip: >
+      {
+        "payload0": "10.223.20.201",
+        "payload1": "10.223.21.49",
+        "payload2": "10.223.21.45",
+        "payload3": "10.223.20.209",
+        "payload4": "10.223.20.173"
+      }
     # MINI MAC -> PAYLOAD IP
     #   Payloads
 
@@ -28,12 +29,14 @@ monitor_node:
         "00:30:1a:3b:14:cd": "10.19.30.3"
       }
 
-edge_payload_monitor:
+optimized_payload_monitor:
   ros__parameters:
-    hostname_to_ip_mapping:
-      payload0: "10.19.30.100"
-      payload1: "10.19.30.101"
-      payload2: "10.19.30.102"
-      payload3: "10.19.30.103"
-      payload4: "10.19.30.104"
+    hostname_to_ip_mapping: >
+      {
+        "payload0": "10.19.30.100",
+        "payload1": "10.19.30.101",
+        "payload2": "10.19.30.102",
+        "payload3": "10.19.30.103",
+        "payload4": "10.19.30.104"
+      }
     orange_box_ips: ["10.19.30.2", "10.19.30.3"]

@@ -97,7 +97,8 @@ class EdgePayloadMonitor(Node):
         super().__init__("edge_payload_monitor", automatically_declare_parameters_from_overrides=True)
 
         self.hostname: str = os.uname()[1]
-        self.hostname_to_ip_mapping: Dict[str, str] = self.get_parameter('hostname_to_ip_mapping').value
+        raw_map = self.get_parameter('hostname_to_ip_mapping').value
+        self.hostname_to_ip_mapping = json.loads(raw_map) if isinstance(raw_map, str) else raw_map
         self.orange_box_ips: List[str] = self.get_parameter('orange_box_ips').value
         self.node_list: List[str] = sorted(list(self.hostname_to_ip_mapping.values()) + self.orange_box_ips)
         
@@ -277,9 +278,15 @@ class EdgePayloadMonitor(Node):
             out = subprocess.check_output(cmd, text=True, stderr=subprocess.STDOUT, timeout=IPERF_TIME + IPERF_TIMEOUT_BUFFER)
             ok = True
         except subprocess.CalledProcessError as e:
-            out = e.output if e.output is not None else "CalledProcessError with no output"
+            out = e.output or ""
             ok = False
-            self.get_logger().warn(f"IPERF {ip} failed: {e}")
+            # 🔍 Detect the pattern from "no server" / bad descriptor cases
+            if "connected" in out and '"intervals":' in out and not out.strip().endswith('}'):
+                self.get_logger().warn(f"[NO SERVER] {ip} — iperf3 server not running or connection refused.")
+            elif "unable to send control message" in out or "Bad file descriptor" in out:
+                self.get_logger().warn(f"[NO SERVER] {ip} — iperf3 client failed to contact server.")
+            else:
+                self.get_logger().warn(f"IPERF {ip} failed: {e}")
         except subprocess.TimeoutExpired:
             out = "Test timed out"
             ok = False
@@ -296,8 +303,8 @@ class EdgePayloadMonitor(Node):
                 mbps = bits_per_second / 1_000_000
                 self.get_logger().info(f"[BANDWIDTH] IPERF {ip}: {mbps:.1f} Mbps")
         except json.JSONDecodeError:
-            self.get_logger().warn(f"IPERF {ip}: iperf output is not valid JSON: {out}")
-            out = json.dumps({"error": "Invalid JSON output from iperf"})
+            self.get_logger().warn(f"IPERF {ip}: iperf output is not valid JSON: (likely no server).")
+            out = json.dumps({"error": "Invalid or truncated iperf3 output", "ip": ip})
 
         result = {"role": "client", "ip": ip, "ok": ok, "raw": out}
         self.iperf_pub.publish(String(data=json.dumps(result)))

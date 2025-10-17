@@ -62,14 +62,16 @@ class LinkStateScraper(Node):
     def _get_radio_ip(self) -> str:
         """
         Determines the radio IP address based on the hostname.
-
-        Returns:
-            The IP address of the radio.
-
-        Raises:
-            RuntimeError: If the hostname is not found in the mapping.
+        Handles both YAML dicts and JSON-string formats.
         """
-        hostname_to_radio_ip: Dict[str, str] = self.get_parameter('hostname_to_radio_ip').value
+        raw_map = self.get_parameter('hostname_to_radio_ip').value
+
+        # Handle JSON string or dict transparently
+        if isinstance(raw_map, str):
+            hostname_to_radio_ip = json.loads(raw_map)
+        else:
+            hostname_to_radio_ip = raw_map
+
         try:
             return hostname_to_radio_ip[self.hostname]
         except KeyError:
