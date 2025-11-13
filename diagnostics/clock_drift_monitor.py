@@ -21,6 +21,7 @@ from typing import Dict, List, Tuple, Optional
 from datetime import datetime
 import json
 import statistics
+import shutil
 
 
 class ClockDriftMonitor:
@@ -36,20 +37,54 @@ class ClockDriftMonitor:
         "10.19.30.104"
     ]
     
-    def __init__(self, ips: List[str], duration: int = 60, samples: int = 10):
+    def __init__(self, ips: List[str], username: str = "neuroam", password: Optional[str] = None, duration: int = 60, samples: int = 10):
         """
         Initialize the clock drift monitor.
         
         Args:
             ips: List of IP addresses to monitor
+            username: SSH username (default: neuroam)
+            password: SSH password (if None, will try key-based auth)
             duration: Total duration of monitoring in seconds
             samples: Number of samples to take
         """
         self.ips = ips
+        self.username = username
+        self.password = password
         self.duration = duration
         self.samples = samples
         self.interval = duration / (samples - 1) if samples > 1 else 1
         self.measurements: List[Dict[str, float]] = []
+        self.use_sshpass = password is not None and shutil.which("sshpass") is not None
+        
+        if password and not self.use_sshpass:
+            print("⚠️  Warning: sshpass not found. Install it for password authentication:")
+            print("   sudo apt-get install sshpass")
+            print("   Trying key-based authentication instead...\n")
+    
+    def _build_ssh_command(self, ip: str, remote_command: str, timeout: int = 2) -> List[str]:
+        """
+        Build SSH command with appropriate authentication method.
+        
+        Args:
+            ip: IP address
+            remote_command: Command to run on remote host
+            timeout: Connection timeout
+            
+        Returns:
+            List of command arguments
+        """
+        ssh_opts = [
+            "-o", f"ConnectTimeout={timeout}",
+            "-o", "StrictHostKeyChecking=no",
+            "-o", "UserKnownHostsFile=/dev/null",
+            "-o", "LogLevel=ERROR"
+        ]
+        
+        if self.use_sshpass:
+            return ["sshpass", "-p", self.password, "ssh"] + ssh_opts + [f"{self.username}@{ip}", remote_command]
+        else:
+            return ["ssh"] + ssh_opts + [f"{self.username}@{ip}", remote_command]
         
     def get_time_from_host(self, ip: str) -> Optional[Tuple[float, float]]:
         """
@@ -64,10 +99,9 @@ class ClockDriftMonitor:
         try:
             local_before = time.time()
             
+            cmd = self._build_ssh_command(ip, "date +%s.%N", 2)
             result = subprocess.run(
-                ["ssh", "-o", "ConnectTimeout=2",
-                 "-o", "StrictHostKeyChecking=no",
-                 f"root@{ip}", "date +%s.%N"],
+                cmd,
                 capture_output=True,
                 text=True,
                 timeout=3
@@ -354,6 +388,20 @@ Examples:
     )
     
     parser.add_argument(
+        '--username',
+        type=str,
+        default='neuroam',
+        help='SSH username (default: neuroam)'
+    )
+    
+    parser.add_argument(
+        '--password',
+        type=str,
+        default='neuroam',
+        help='SSH password (default: neuroam)'
+    )
+    
+    parser.add_argument(
         '--output',
         type=str,
         help='Save measurements to JSON file'
@@ -366,7 +414,7 @@ Examples:
         sys.exit(1)
     
     try:
-        monitor = ClockDriftMonitor(args.ips, args.duration, args.samples)
+        monitor = ClockDriftMonitor(args.ips, args.username, args.password, args.duration, args.samples)
         monitor.run_monitoring()
         monitor.analyze_drift()
         

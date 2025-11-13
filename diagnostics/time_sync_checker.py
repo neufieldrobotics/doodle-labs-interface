@@ -23,6 +23,7 @@ import time
 from typing import Dict, List, Tuple, Optional
 from datetime import datetime
 import json
+import shutil
 
 
 class TimeSyncChecker:
@@ -41,18 +42,52 @@ class TimeSyncChecker:
     # Default threshold for time difference warning (in seconds)
     DEFAULT_THRESHOLD = 0.1  # 100ms
     
-    def __init__(self, ips: List[str], threshold: float = DEFAULT_THRESHOLD):
+    def __init__(self, ips: List[str], username: str = "neuroam", password: Optional[str] = None, threshold: float = DEFAULT_THRESHOLD):
         """
         Initialize the time sync checker.
         
         Args:
             ips: List of IP addresses to check
+            username: SSH username (default: neuroam)
+            password: SSH password (if None, will try key-based auth)
             threshold: Maximum acceptable time difference in seconds
         """
         self.ips = ips
+        self.username = username
+        self.password = password
         self.threshold = threshold
         self.results: Dict[str, Dict] = {}
+        self.use_sshpass = password is not None and shutil.which("sshpass") is not None
         
+        if password and not self.use_sshpass:
+            print("⚠️  Warning: sshpass not found. Install it for password authentication:")
+            print("   sudo apt-get install sshpass")
+            print("   Trying key-based authentication instead...\n")
+    
+    def _build_ssh_command(self, ip: str, remote_command: str, timeout: int = 2) -> List[str]:
+        """
+        Build SSH command with appropriate authentication method.
+        
+        Args:
+            ip: IP address
+            remote_command: Command to run on remote host
+            timeout: Connection timeout
+            
+        Returns:
+            List of command arguments
+        """
+        ssh_opts = [
+            "-o", f"ConnectTimeout={timeout}",
+            "-o", "StrictHostKeyChecking=no",
+            "-o", "UserKnownHostsFile=/dev/null",
+            "-o", "LogLevel=ERROR"
+        ]
+        
+        if self.use_sshpass:
+            return ["sshpass", "-p", self.password, "ssh"] + ssh_opts + [f"{self.username}@{ip}", remote_command]
+        else:
+            return ["ssh"] + ssh_opts + [f"{self.username}@{ip}", remote_command]
+    
     def check_ssh_connectivity(self, ip: str, timeout: int = 2) -> bool:
         """
         Check if SSH connection to the given IP is possible.
@@ -65,11 +100,9 @@ class TimeSyncChecker:
             True if SSH connection successful, False otherwise
         """
         try:
+            cmd = self._build_ssh_command(ip, "echo 'OK'", timeout)
             result = subprocess.run(
-                ["ssh", "-o", "ConnectTimeout={}".format(timeout), 
-                 "-o", "StrictHostKeyChecking=no",
-                 "-o", "BatchMode=yes",
-                 f"root@{ip}", "echo 'OK'"],
+                cmd,
                 capture_output=True,
                 text=True,
                 timeout=timeout + 1
@@ -90,10 +123,9 @@ class TimeSyncChecker:
         """
         try:
             # Use date +%s.%N to get high-precision timestamp
+            cmd = self._build_ssh_command(ip, "date +%s.%N", 2)
             result = subprocess.run(
-                ["ssh", "-o", "ConnectTimeout=2",
-                 "-o", "StrictHostKeyChecking=no",
-                 f"root@{ip}", "date +%s.%N"],
+                cmd,
                 capture_output=True,
                 text=True,
                 timeout=3
@@ -118,7 +150,7 @@ class TimeSyncChecker:
         """
         try:
             # Check if ROS is running and get the time
-            cmd = (
+            ros_cmd = (
                 "source /opt/ros/*/setup.bash 2>/dev/null && "
                 "ros2 node list > /dev/null 2>&1 && "
                 "python3 -c 'import rclpy; rclpy.init(); "
@@ -128,10 +160,9 @@ class TimeSyncChecker:
                 "node.destroy_node(); rclpy.shutdown()' 2>/dev/null"
             )
             
+            cmd = self._build_ssh_command(ip, ros_cmd, 2)
             result = subprocess.run(
-                ["ssh", "-o", "ConnectTimeout=2",
-                 "-o", "StrictHostKeyChecking=no",
-                 f"root@{ip}", cmd],
+                cmd,
                 capture_output=True,
                 text=True,
                 timeout=5
@@ -155,13 +186,15 @@ class TimeSyncChecker:
         """
         try:
             # Try to get timedatectl status
+            ntp_cmd = (
+                "timedatectl status 2>/dev/null | grep 'synchronized\\|NTP' || "
+                "chronyc tracking 2>/dev/null | head -n 3 || "
+                "ntpq -p 2>/dev/null | head -n 3 || echo 'N/A'"
+            )
+            
+            cmd = self._build_ssh_command(ip, ntp_cmd, 2)
             result = subprocess.run(
-                ["ssh", "-o", "ConnectTimeout=2",
-                 "-o", "StrictHostKeyChecking=no",
-                 f"root@{ip}", 
-                 "timedatectl status 2>/dev/null | grep 'synchronized\\|NTP' || "
-                 "chronyc tracking 2>/dev/null | head -n 3 || "
-                 "ntpq -p 2>/dev/null | head -n 3 || echo 'N/A'"],
+                cmd,
                 capture_output=True,
                 text=True,
                 timeout=3
@@ -387,6 +420,18 @@ Examples:
     )
     
     parser.add_argument(
+        '--username',
+        default='neuroam',
+        help='SSH username (default: neuroam)'
+    )
+    
+    parser.add_argument(
+        '--password',
+        default='neuroam',
+        help='SSH password (default: neuroam)'
+    )
+    
+    parser.add_argument(
         '--threshold',
         type=float,
         default=TimeSyncChecker.DEFAULT_THRESHOLD,
@@ -423,7 +468,7 @@ Examples:
                 print(f"# Iteration {iteration}")
                 print(f"{'#' * 70}")
                 
-                checker = TimeSyncChecker(args.ips, args.threshold)
+                checker = TimeSyncChecker(args.ips, args.username, args.password, args.threshold)
                 checker.check_all_hosts()
                 is_synced, summary = checker.analyze_results()
                 
@@ -435,7 +480,7 @@ Examples:
                 print(f"\nNext check in {args.interval} seconds...")
                 time.sleep(args.interval)
         else:
-            checker = TimeSyncChecker(args.ips, args.threshold)
+            checker = TimeSyncChecker(args.ips, args.username, args.password, args.threshold)
             checker.check_all_hosts()
             is_synced, summary = checker.analyze_results()
             
