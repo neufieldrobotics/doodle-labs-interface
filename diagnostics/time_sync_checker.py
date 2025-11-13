@@ -111,17 +111,27 @@ class TimeSyncChecker:
         except (subprocess.TimeoutExpired, Exception) as e:
             return False
     
-    def get_system_time(self, ip: str) -> Optional[float]:
+    def get_system_time(self, ip: str) -> Optional[Tuple[float, float, float]]:
         """
-        Get the system time from a remote host via SSH.
+        Get the system time from a remote host via SSH with latency compensation.
+        
+        This method measures the round-trip time and uses the midpoint to estimate
+        when the remote timestamp was actually captured, providing more accurate
+        time synchronization measurements.
         
         Args:
             ip: IP address of the host
             
         Returns:
-            System time in seconds since epoch, or None if failed
+            Tuple of (remote_time, local_time_estimate, uncertainty) or None if failed
+            - remote_time: The timestamp from the remote host
+            - local_time_estimate: Estimated local time when remote measurement occurred (midpoint)
+            - uncertainty: Half the round-trip time (measurement uncertainty in seconds)
         """
         try:
+            # Record local time before SSH command
+            local_before = time.time()
+            
             # Use date +%s.%N to get high-precision timestamp
             cmd = self._build_ssh_command(ip, "date +%s.%N", 2)
             result = subprocess.run(
@@ -131,24 +141,35 @@ class TimeSyncChecker:
                 timeout=3
             )
             
+            # Record local time after SSH command
+            local_after = time.time()
+            
             if result.returncode == 0:
-                return float(result.stdout.strip())
+                remote_time = float(result.stdout.strip())
+                # Use midpoint of before/after as best estimate of when measurement occurred
+                local_time_estimate = (local_before + local_after) / 2
+                # Half the round-trip time is the uncertainty
+                uncertainty = (local_after - local_before) / 2
+                return remote_time, local_time_estimate, uncertainty
             return None
         except (subprocess.TimeoutExpired, ValueError, Exception) as e:
             print(f"  ⚠️  Failed to get system time from {ip}: {e}")
             return None
     
-    def get_ros_time(self, ip: str) -> Optional[float]:
+    def get_ros_time(self, ip: str) -> Optional[Tuple[float, float, float]]:
         """
-        Get the ROS time from a remote host via SSH.
+        Get the ROS time from a remote host via SSH with latency compensation.
         
         Args:
             ip: IP address of the host
             
         Returns:
-            ROS time in seconds since epoch, or None if ROS not available
+            Tuple of (remote_time, local_time_estimate, uncertainty) or None if ROS not available
         """
         try:
+            # Record local time before SSH command
+            local_before = time.time()
+            
             # Check if ROS is running and get the time
             ros_cmd = (
                 "source /opt/ros/*/setup.bash 2>/dev/null && "
@@ -168,8 +189,14 @@ class TimeSyncChecker:
                 timeout=5
             )
             
+            # Record local time after SSH command
+            local_after = time.time()
+            
             if result.returncode == 0 and result.stdout.strip():
-                return float(result.stdout.strip())
+                remote_time = float(result.stdout.strip())
+                local_time_estimate = (local_before + local_after) / 2
+                uncertainty = (local_after - local_before) / 2
+                return remote_time, local_time_estimate, uncertainty
             return None
         except (subprocess.TimeoutExpired, ValueError, Exception) as e:
             return None
@@ -222,7 +249,11 @@ class TimeSyncChecker:
             "ip": ip,
             "reachable": False,
             "system_time": None,
+            "system_time_local": None,
+            "system_time_uncertainty": None,
             "ros_time": None,
+            "ros_time_local": None,
+            "ros_time_uncertainty": None,
             "ntp_status": None,
             "check_timestamp": time.time()
         }
@@ -236,20 +267,26 @@ class TimeSyncChecker:
         print(f"  ✓ SSH connection successful")
         
         # Get system time
-        system_time = self.get_system_time(ip)
-        if system_time:
-            result["system_time"] = system_time
-            dt = datetime.fromtimestamp(system_time)
-            print(f"  ✓ System time: {dt.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
+        system_time_result = self.get_system_time(ip)
+        if system_time_result:
+            remote_time, local_time, uncertainty = system_time_result
+            result["system_time"] = remote_time
+            result["system_time_local"] = local_time
+            result["system_time_uncertainty"] = uncertainty
+            dt = datetime.fromtimestamp(remote_time)
+            print(f"  ✓ System time: {dt.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]} (±{uncertainty*1000:.1f}ms)")
         else:
             print(f"  ❌ Failed to get system time")
         
         # Get ROS time
-        ros_time = self.get_ros_time(ip)
-        if ros_time:
-            result["ros_time"] = ros_time
-            dt = datetime.fromtimestamp(ros_time)
-            print(f"  ✓ ROS time: {dt.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
+        ros_time_result = self.get_ros_time(ip)
+        if ros_time_result:
+            remote_time, local_time, uncertainty = ros_time_result
+            result["ros_time"] = remote_time
+            result["ros_time_local"] = local_time
+            result["ros_time_uncertainty"] = uncertainty
+            dt = datetime.fromtimestamp(remote_time)
+            print(f"  ✓ ROS time: {dt.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]} (±{uncertainty*1000:.1f}ms)")
         else:
             print(f"  ⚠️  ROS time not available (ROS may not be running)")
         
@@ -303,7 +340,8 @@ class TimeSyncChecker:
             print(f"\n⚠️  Unreachable hosts: {', '.join(unreachable_hosts)}")
         
         # Analyze system time synchronization
-        system_times = [(ip, r["system_time"]) for ip, r in self.results.items() 
+        system_times = [(ip, r["system_time"], r["system_time_local"], r["system_time_uncertainty"]) 
+                       for ip, r in self.results.items() 
                        if r["system_time"] is not None]
         
         if len(system_times) < 2:
@@ -311,30 +349,47 @@ class TimeSyncChecker:
             print(f"\n{summary}")
             return False, summary
         
-        # Calculate time differences
+        # Calculate time differences (accounting for when measurements were taken)
         print(f"\n🕐 System Time Analysis:")
         print(f"  Reachable hosts with time: {len(system_times)}")
         
-        times_only = [t for _, t in system_times]
-        min_time = min(times_only)
-        max_time = max(times_only)
-        time_spread = max_time - min_time
+        # Calculate average measurement uncertainty
+        avg_uncertainty = sum(u for _, _, _, u in system_times) / len(system_times)
+        print(f"  Average measurement uncertainty: ±{avg_uncertainty * 1000:.2f} ms")
         
-        print(f"  Time spread: {time_spread * 1000:.2f} ms")
-        
-        # Show individual differences
-        reference_ip, reference_time = system_times[0]
+        # Use the first host as reference
+        reference_ip, ref_remote, ref_local, ref_uncertainty = system_times[0]
         print(f"\n  Using {reference_ip} as reference:")
         
+        # Calculate compensated time differences
         max_diff = 0.0
-        for ip, sys_time in system_times[1:]:
-            diff = sys_time - reference_time
-            max_diff = max(max_diff, abs(diff))
-            status = "✓" if abs(diff) <= self.threshold else "⚠️"
-            print(f"    {status} {ip}: {diff * 1000:+.2f} ms")
+        compensated_diffs = []
+        
+        for ip, remote_time, local_time, uncertainty in system_times[1:]:
+            # Calculate time offset accounting for when measurements were taken locally
+            # offset = (remote - local_remote) - (ref_remote - ref_local)
+            # This gives us the clock offset between the two hosts
+            time_offset = (remote_time - local_time) - (ref_remote - ref_local)
+            
+            # Combined uncertainty (RSS of individual uncertainties)
+            combined_uncertainty = (uncertainty**2 + ref_uncertainty**2)**0.5
+            
+            compensated_diffs.append(abs(time_offset))
+            max_diff = max(max_diff, abs(time_offset))
+            
+            status = "✓" if abs(time_offset) <= self.threshold else "⚠️"
+            print(f"    {status} {ip}: {time_offset * 1000:+.2f} ms (±{combined_uncertainty * 1000:.1f} ms)")
+        
+        # Calculate statistics
+        if compensated_diffs:
+            time_spread = max(compensated_diffs)
+            avg_diff = sum(compensated_diffs) / len(compensated_diffs)
+            print(f"\n  Max offset: {time_spread * 1000:.2f} ms")
+            print(f"  Avg offset: {avg_diff * 1000:.2f} ms")
         
         # Analyze ROS time synchronization
-        ros_times = [(ip, r["ros_time"]) for ip, r in self.results.items() 
+        ros_times = [(ip, r["ros_time"], r["ros_time_local"], r["ros_time_uncertainty"]) 
+                    for ip, r in self.results.items() 
                     if r["ros_time"] is not None]
         
         if ros_times:
@@ -342,32 +397,40 @@ class TimeSyncChecker:
             print(f"  Hosts with ROS time: {len(ros_times)}")
             
             if len(ros_times) >= 2:
-                ros_times_only = [t for _, t in ros_times]
-                ros_min = min(ros_times_only)
-                ros_max = max(ros_times_only)
-                ros_spread = ros_max - ros_min
+                # Calculate average measurement uncertainty
+                ros_avg_uncertainty = sum(u for _, _, _, u in ros_times) / len(ros_times)
+                print(f"  Average measurement uncertainty: ±{ros_avg_uncertainty * 1000:.2f} ms")
                 
-                print(f"  Time spread: {ros_spread * 1000:.2f} ms")
-                
-                reference_ip, reference_time = ros_times[0]
+                reference_ip, ref_ros_remote, ref_ros_local, ref_ros_uncertainty = ros_times[0]
                 print(f"\n  Using {reference_ip} as reference:")
                 
-                for ip, ros_time in ros_times[1:]:
-                    diff = ros_time - reference_time
-                    status = "✓" if abs(diff) <= self.threshold else "⚠️"
-                    print(f"    {status} {ip}: {diff * 1000:+.2f} ms")
+                ros_compensated_diffs = []
+                for ip, ros_remote, ros_local, ros_uncertainty in ros_times[1:]:
+                    # Calculate compensated offset
+                    time_offset = (ros_remote - ros_local) - (ref_ros_remote - ref_ros_local)
+                    combined_uncertainty = (ros_uncertainty**2 + ref_ros_uncertainty**2)**0.5
+                    
+                    ros_compensated_diffs.append(abs(time_offset))
+                    status = "✓" if abs(time_offset) <= self.threshold else "⚠️"
+                    print(f"    {status} {ip}: {time_offset * 1000:+.2f} ms (±{combined_uncertainty * 1000:.1f} ms)")
+                
+                if ros_compensated_diffs:
+                    ros_max_offset = max(ros_compensated_diffs)
+                    ros_avg_offset = sum(ros_compensated_diffs) / len(ros_compensated_diffs)
+                    print(f"\n  Max offset: {ros_max_offset * 1000:.2f} ms")
+                    print(f"  Avg offset: {ros_avg_offset * 1000:.2f} ms")
         else:
             print(f"\n⚠️  No ROS time available (ROS may not be running on any host)")
         
         # Final verdict
         print("\n" + "=" * 70)
-        is_synced = time_spread <= self.threshold
+        is_synced = max_diff <= self.threshold
         
         if is_synced:
             summary = f"✅ PASS: All systems synchronized within {self.threshold * 1000:.1f} ms"
             print(summary)
         else:
-            summary = f"⚠️  WARN: Time spread ({time_spread * 1000:.2f} ms) exceeds threshold ({self.threshold * 1000:.1f} ms)"
+            summary = f"⚠️  WARN: Max time offset ({max_diff * 1000:.2f} ms) exceeds threshold ({self.threshold * 1000:.1f} ms)"
             print(summary)
             print("\nRecommendations:")
             print("  • Check NTP configuration on all hosts")
