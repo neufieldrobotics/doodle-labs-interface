@@ -157,15 +157,29 @@ class QuickDiagnostics:
         except (subprocess.TimeoutExpired, Exception):
             return None
     
-    def check_ntp_service(self, ip: str) -> Tuple[Optional[str], Optional[str]]:
+    def check_ntp_service(self, ip: str) -> Tuple[Optional[str], Optional[str], bool]:
         """
         Check NTP/Chrony service status.
         
         Returns:
-            Tuple of (service_name, status)
+            Tuple of (service_name, status, chrony_installed)
         """
         try:
-            # Check for chronyd
+            # Check if chrony is installed
+            check_install_cmd = self._build_ssh_command(
+                ip,
+                "command -v chronyc >/dev/null 2>&1 && echo 'installed' || echo 'missing'",
+                2
+            )
+            install_result = subprocess.run(
+                check_install_cmd,
+                capture_output=True,
+                text=True,
+                timeout=3
+            )
+            chrony_installed = 'installed' in install_result.stdout if install_result.returncode == 0 else False
+            
+            # Check for service status
             cmd = self._build_ssh_command(
                 ip,
                 "systemctl is-active chronyd 2>/dev/null || "
@@ -201,12 +215,12 @@ class QuickDiagnostics:
                     )
                     lines = check_result.stdout.strip().split('\n')
                     service = lines[-1] if lines else 'unknown'
-                    return service, 'active'
+                    return service, 'active', chrony_installed
                 
-                return 'unknown', status
-            return None, None
+                return 'unknown', status, chrony_installed
+            return None, None, chrony_installed
         except (subprocess.TimeoutExpired, Exception):
-            return None, None
+            return None, None, False
     
     def check_time_sync_status(self, ip: str) -> Optional[str]:
         """Check if system clock is synchronized."""
@@ -287,6 +301,7 @@ class QuickDiagnostics:
             "hostname": None,
             "ntp_service": None,
             "ntp_status": None,
+            "chrony_installed": False,
             "time_sync": None,
             "timezone": None,
             "ros_daemon": False
@@ -318,10 +333,14 @@ class QuickDiagnostics:
             print(f"  ℹ️  Hostname: {hostname}")
         
         # Check NTP service
-        ntp_service, ntp_status = self.check_ntp_service(ip)
+        ntp_service, ntp_status, chrony_installed = self.check_ntp_service(ip)
         result["ntp_service"] = ntp_service
         result["ntp_status"] = ntp_status
-        if ntp_service:
+        result["chrony_installed"] = chrony_installed
+        
+        if not chrony_installed:
+            print(f"  ❌ chrony not installed")
+        elif ntp_service:
             status_icon = "✓" if ntp_status == "active" else "⚠️"
             print(f"  {status_icon} NTP service: {ntp_service} ({ntp_status})")
         else:
@@ -385,6 +404,8 @@ class QuickDiagnostics:
         # Count issues
         reachable = sum(1 for r in self.results.values() if r.get("ping"))
         ssh_ok = sum(1 for r in self.results.values() if r.get("ssh"))
+        chrony_installed = sum(1 for r in self.results.values() 
+                              if r.get("chrony_installed"))
         ntp_active = sum(1 for r in self.results.values() 
                         if r.get("ntp_status") == "active")
         time_synced = sum(1 for r in self.results.values() 
@@ -396,6 +417,7 @@ class QuickDiagnostics:
         print(f"\n📊 Status Overview:")
         print(f"  Reachable (ping):     {reachable}/{total}")
         print(f"  SSH accessible:       {ssh_ok}/{total}")
+        print(f"  chrony installed:     {chrony_installed}/{total}")
         print(f"  NTP active:           {ntp_active}/{total}")
         print(f"  Time synchronized:    {time_synced}/{total}")
         print(f"  ROS daemon running:   {ros_running}/{total}")
@@ -411,6 +433,11 @@ class QuickDiagnostics:
             no_ssh = [ip for ip, r in self.results.items() 
                      if r.get("ping") and not r.get("ssh")]
             issues.append(f"SSH issues: {', '.join(no_ssh)}")
+        
+        if chrony_installed < ssh_ok:
+            no_chrony = [ip for ip, r in self.results.items() 
+                        if r.get("ssh") and not r.get("chrony_installed")]
+            issues.append(f"chrony not installed: {', '.join(no_chrony)}")
         
         if ntp_active < ssh_ok:
             no_ntp = [ip for ip, r in self.results.items() 
@@ -436,6 +463,13 @@ class QuickDiagnostics:
             print(f"\n✅ No major issues detected!")
         
         print("\n💡 Recommendations:")
+        if chrony_installed < ssh_ok:
+            print("  • Install chrony on missing hosts:")
+            missing_chrony = [ip for ip, r in self.results.items() 
+                            if r.get("ssh") and not r.get("chrony_installed")]
+            print("    for ip in " + " ".join(missing_chrony) + "; do")
+            print("      sshpass -p neuroam ssh neuroam@$ip 'sudo apt-get install -y chrony && sudo systemctl enable --now chronyd'")
+            print("    done")
         if ntp_active < ssh_ok:
             print("  • Start NTP service: systemctl start chronyd")
         if time_synced < ssh_ok:

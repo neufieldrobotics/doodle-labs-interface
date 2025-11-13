@@ -20,6 +20,22 @@ echo ""
 echo "📦 Installing sshpass (for SSH password authentication)..."
 $APT_CMD install -y sshpass
 
+# Install chrony
+echo ""
+echo "📦 Installing chrony (for time synchronization)..."
+$APT_CMD install -y chrony
+
+# Enable and start chronyd
+echo ""
+echo "🔧 Enabling and starting chronyd service..."
+if [ "$EUID" -eq 0 ]; then
+    systemctl enable chronyd
+    systemctl start chronyd
+else
+    sudo systemctl enable chronyd
+    sudo systemctl start chronyd
+fi
+
 # Verify installation
 echo ""
 echo "✅ Verifying installation..."
@@ -27,6 +43,14 @@ if command -v sshpass &> /dev/null; then
     echo "  ✓ sshpass: $(which sshpass)"
 else
     echo "  ❌ sshpass installation failed"
+    exit 1
+fi
+
+if command -v chronyc &> /dev/null; then
+    echo "  ✓ chrony: $(which chronyc)"
+    echo "    Status: $(systemctl is-active chronyd)"
+else
+    echo "  ❌ chrony installation failed"
     exit 1
 fi
 
@@ -39,6 +63,11 @@ fi
 
 echo ""
 echo "✅ All dependencies installed successfully!"
+echo ""
+echo "📌 Note: On remote payloads, you'll need to install chrony separately:"
+echo "   for ip in 10.19.30.{100..104}; do"
+echo "     sshpass -p neuroam ssh neuroam@\$ip 'sudo apt-get install -y chrony && sudo systemctl enable --now chronyd'"
+echo "   done"
 echo ""
 echo "You can now run the diagnostic scripts:"
 echo "  ./quick_diag.py"
