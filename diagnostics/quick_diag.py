@@ -23,6 +23,7 @@ import sys
 import concurrent.futures
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime
+import shutil
 
 
 class QuickDiagnostics:
@@ -38,17 +39,27 @@ class QuickDiagnostics:
         "10.19.30.104"
     ]
     
-    def __init__(self, ips: List[str], parallel: bool = True):
+    def __init__(self, ips: List[str], username: str = "neuroam", password: Optional[str] = None, parallel: bool = True):
         """
         Initialize diagnostics.
         
         Args:
             ips: List of IP addresses to check
+            username: SSH username (default: neuroam)
+            password: SSH password (if None, will try key-based auth)
             parallel: Run checks in parallel for speed
         """
         self.ips = ips
+        self.username = username
+        self.password = password
         self.parallel = parallel
         self.results: Dict[str, Dict] = {}
+        self.use_sshpass = password is not None and shutil.which("sshpass") is not None
+        
+        if password and not self.use_sshpass:
+            print("⚠️  Warning: sshpass not found. Install it for password authentication:")
+            print("   sudo apt-get install sshpass")
+            print("   Trying key-based authentication instead...\n")
     
     def ping_host(self, ip: str, count: int = 3, timeout: int = 2) -> Tuple[bool, Optional[float]]:
         """
@@ -84,6 +95,30 @@ class QuickDiagnostics:
         except (subprocess.TimeoutExpired, Exception):
             return False, None
     
+    def _build_ssh_command(self, ip: str, remote_command: str, timeout: int = 2) -> List[str]:
+        """
+        Build SSH command with appropriate authentication method.
+        
+        Args:
+            ip: IP address
+            remote_command: Command to run on remote host
+            timeout: Connection timeout
+            
+        Returns:
+            List of command arguments
+        """
+        ssh_opts = [
+            "-o", f"ConnectTimeout={timeout}",
+            "-o", "StrictHostKeyChecking=no",
+            "-o", "UserKnownHostsFile=/dev/null",
+            "-o", "LogLevel=ERROR"
+        ]
+        
+        if self.use_sshpass:
+            return ["sshpass", "-p", self.password, "ssh"] + ssh_opts + [f"{self.username}@{ip}", remote_command]
+        else:
+            return ["ssh"] + ssh_opts + [f"{self.username}@{ip}", remote_command]
+    
     def check_ssh(self, ip: str, timeout: int = 2) -> bool:
         """
         Check if SSH connection is possible.
@@ -96,11 +131,9 @@ class QuickDiagnostics:
             True if SSH works, False otherwise
         """
         try:
+            cmd = self._build_ssh_command(ip, "exit", timeout)
             result = subprocess.run(
-                ["ssh", "-o", f"ConnectTimeout={timeout}",
-                 "-o", "StrictHostKeyChecking=no",
-                 "-o", "BatchMode=yes",
-                 f"root@{ip}", "exit"],
+                cmd,
                 capture_output=True,
                 timeout=timeout + 1
             )
@@ -111,10 +144,9 @@ class QuickDiagnostics:
     def get_hostname(self, ip: str) -> Optional[str]:
         """Get hostname from remote host."""
         try:
+            cmd = self._build_ssh_command(ip, "hostname", 2)
             result = subprocess.run(
-                ["ssh", "-o", "ConnectTimeout=2",
-                 "-o", "StrictHostKeyChecking=no",
-                 f"root@{ip}", "hostname"],
+                cmd,
                 capture_output=True,
                 text=True,
                 timeout=3
@@ -134,14 +166,16 @@ class QuickDiagnostics:
         """
         try:
             # Check for chronyd
+            cmd = self._build_ssh_command(
+                ip,
+                "systemctl is-active chronyd 2>/dev/null || "
+                "systemctl is-active ntpd 2>/dev/null || "
+                "systemctl is-active systemd-timesyncd 2>/dev/null || "
+                "echo 'none'",
+                2
+            )
             result = subprocess.run(
-                ["ssh", "-o", "ConnectTimeout=2",
-                 "-o", "StrictHostKeyChecking=no",
-                 f"root@{ip}", 
-                 "systemctl is-active chronyd 2>/dev/null || "
-                 "systemctl is-active ntpd 2>/dev/null || "
-                 "systemctl is-active systemd-timesyncd 2>/dev/null || "
-                 "echo 'none'"],
+                cmd,
                 capture_output=True,
                 text=True,
                 timeout=3
@@ -152,13 +186,15 @@ class QuickDiagnostics:
                 
                 if 'chronyd' in status or status == 'active':
                     # Try to determine which service
+                    check_cmd = self._build_ssh_command(
+                        ip,
+                        "systemctl is-active chronyd && echo 'chronyd' || "
+                        "systemctl is-active ntpd && echo 'ntpd' || "
+                        "systemctl is-active systemd-timesyncd && echo 'timesyncd'",
+                        2
+                    )
                     check_result = subprocess.run(
-                        ["ssh", "-o", "ConnectTimeout=2",
-                         "-o", "StrictHostKeyChecking=no",
-                         f"root@{ip}",
-                         "systemctl is-active chronyd && echo 'chronyd' || "
-                         "systemctl is-active ntpd && echo 'ntpd' || "
-                         "systemctl is-active systemd-timesyncd && echo 'timesyncd'"],
+                        check_cmd,
                         capture_output=True,
                         text=True,
                         timeout=3
@@ -175,11 +211,13 @@ class QuickDiagnostics:
     def check_time_sync_status(self, ip: str) -> Optional[str]:
         """Check if system clock is synchronized."""
         try:
+            cmd = self._build_ssh_command(
+                ip,
+                "timedatectl status 2>/dev/null | grep 'synchronized' || echo 'N/A'",
+                2
+            )
             result = subprocess.run(
-                ["ssh", "-o", "ConnectTimeout=2",
-                 "-o", "StrictHostKeyChecking=no",
-                 f"root@{ip}",
-                 "timedatectl status 2>/dev/null | grep 'synchronized' || echo 'N/A'"],
+                cmd,
                 capture_output=True,
                 text=True,
                 timeout=3
@@ -193,11 +231,13 @@ class QuickDiagnostics:
     def check_ros_daemon(self, ip: str) -> bool:
         """Check if ROS daemon is running."""
         try:
+            cmd = self._build_ssh_command(
+                ip,
+                "pgrep -f 'ros2 daemon' > /dev/null && echo 'running' || echo 'not running'",
+                2
+            )
             result = subprocess.run(
-                ["ssh", "-o", "ConnectTimeout=2",
-                 "-o", "StrictHostKeyChecking=no",
-                 f"root@{ip}",
-                 "pgrep -f 'ros2 daemon' > /dev/null && echo 'running' || echo 'not running'"],
+                cmd,
                 capture_output=True,
                 text=True,
                 timeout=3
@@ -211,11 +251,13 @@ class QuickDiagnostics:
     def check_timezone(self, ip: str) -> Optional[str]:
         """Get timezone setting."""
         try:
+            cmd = self._build_ssh_command(
+                ip,
+                "timedatectl 2>/dev/null | grep 'Time zone' || date +%Z",
+                2
+            )
             result = subprocess.run(
-                ["ssh", "-o", "ConnectTimeout=2",
-                 "-o", "StrictHostKeyChecking=no",
-                 f"root@{ip}",
-                 "timedatectl 2>/dev/null | grep 'Time zone' || date +%Z"],
+                cmd,
                 capture_output=True,
                 text=True,
                 timeout=3
@@ -422,6 +464,18 @@ def main():
     )
     
     parser.add_argument(
+        '--username',
+        default='neuroam',
+        help='SSH username (default: neuroam)'
+    )
+    
+    parser.add_argument(
+        '--password',
+        default='neuroam',
+        help='SSH password (default: neuroam)'
+    )
+    
+    parser.add_argument(
         '--sequential',
         action='store_true',
         help='Run checks sequentially instead of in parallel'
@@ -430,7 +484,7 @@ def main():
     args = parser.parse_args()
     
     try:
-        diag = QuickDiagnostics(args.ips, parallel=not args.sequential)
+        diag = QuickDiagnostics(args.ips, username=args.username, password=args.password, parallel=not args.sequential)
         diag.diagnose_all_hosts()
         diag.print_summary()
         
