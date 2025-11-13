@@ -12,8 +12,8 @@ else
 fi
 
 # Update package list
-echo "📦 Updating package list..."
-$APT_CMD update
+# echo "📦 Updating package list..."
+# $APT_CMD update
 
 # Install sshpass
 echo ""
